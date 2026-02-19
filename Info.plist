@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.imessagewatcher.app</string>
+    <key>CFBundleName</key>
+    <string>iMessageWatcher</string>
+    <key>CFBundleExecutable</key>
+    <string>iMessageWatcher</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>2.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>2.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 iMessageWatcher contributors</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>iMessageWatcher creates calendar events from messages sent by a monitored contact.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>iMessageWatcher creates reminders from tasks sent by a monitored contact.</string>
+</dict>
+</plist>
