@@ -135,8 +135,12 @@ swiftc \
 # Bundle Info.plist
 cp "$SCRIPT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
+# ── Create release zip ────────────────────────────────────────────
+ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$BUILD_DIR/$APP_NAME.zip"
+
 echo ""
 echo "Built: $APP_BUNDLE"
+echo "Zip:   $BUILD_DIR/$APP_NAME.zip"
 echo ""
 echo "To run:  open $APP_BUNDLE"
 echo "To install: cp -r $APP_BUNDLE ~/Applications/"

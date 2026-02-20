@@ -14,10 +14,18 @@ iMessageWatcher watches your iMessage database for new messages from a contact y
 - [Ollama](https://ollama.com) running locally
 - Xcode Command Line Tools (`xcode-select --install`)
 
-## Quick Start
+## Install
+
+### Option A: Download Pre-Built App
+
+1. Grab `iMessageWatcher.zip` from the [latest release](https://github.com/rfaile313/iMessageWatcher/releases)
+2. Unzip and move `iMessageWatcher.app` to your Applications folder
+3. Since the app is unsigned, macOS will block it on first launch — right-click the app and choose **Open**, then click **Open** again in the dialog
+
+### Option B: Build from Source
 
 ```bash
-git clone https://github.com/youruser/iMessageWatcher.git
+git clone https://github.com/rfaile313/iMessageWatcher.git
 cd iMessageWatcher
 bash build.sh
 open build/iMessageWatcher.app
