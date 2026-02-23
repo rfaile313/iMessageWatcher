@@ -371,9 +371,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             log("Wake detected")
+            self?.eventStore.refreshSourcesIfNecessary()
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                 self?.scanMessages()
             }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .EKEventStoreChanged, object: eventStore, queue: .main
+        ) { [weak self] _ in
+            log("EventStore changed — refreshing sources")
+            self?.eventStore.refreshSourcesIfNecessary()
         }
 
         NotificationCenter.default.addObserver(
@@ -1028,10 +1036,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             Conversation:
             \(transcript)
-            Respond ONLY with valid JSON (no markdown, no commentary). Use this exact schema:
-            {"items": [{"type": "event", "title": "Dinner with Smiths", \
-            "start": "2025-03-15T19:00:00", "end": "2025-03-15T20:00:00", "all_day": false}]}
-            Or for tasks: {"items": [{"type": "task", "title": "Pick up groceries", \
+            Respond ONLY with valid JSON (no markdown, no commentary).
+            IMPORTANT: Do NOT copy the example values below. Extract ONLY from the conversation above.
+            JSON schema (replace ALL values with real data from the messages):
+            {"items": [{"type": "event", "title": "<REAL TITLE>", \
+            "start": "<REAL ISO 8601>", "end": "<REAL ISO 8601>", "all_day": false}]}
+            For tasks: {"items": [{"type": "task", "title": "<REAL TITLE>", \
             "due_minutes": 30}]}
             If nothing actionable found: {"items": []}
             """
@@ -1076,10 +1086,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             level: .WARN)
                         return false
                     }
-                    // Reject events with wrong year (>1 year from now in either direction)
-                    let delta = abs(startDate.timeIntervalSince(now))
-                    if delta > 365 * 24 * 3600 {
-                        log("Skipping event with wrong year: \"\(item.title)\" \(startStr)",
+                    // Reject events more than 2 days in the past
+                    if startDate.timeIntervalSince(now) < -2 * 24 * 3600 {
+                        log("Skipping past event: \"\(item.title)\" \(startStr)",
+                            level: .WARN)
+                        return false
+                    }
+                    // Reject events more than 1 year in the future
+                    if startDate.timeIntervalSince(now) > 365 * 24 * 3600 {
+                        log("Skipping far-future event: \"\(item.title)\" \(startStr)",
                             level: .WARN)
                         return false
                     }
@@ -1121,6 +1136,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                let msg  = json["message"] as? [String: Any],
                let content = msg["content"] as? String {
                 result = content
+            } else {
+                let raw = String(data: data, encoding: .utf8) ?? "(binary)"
+                log("Ollama returned unparseable response: \(raw.prefix(500))", level: .ERROR)
             }
         }.resume()
 
@@ -1143,6 +1161,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             log("Cannot create event — calendar access denied", level: .WARN)
             return false
         }
+
+        // Refresh the event store so it picks up current calendar sources
+        eventStore.refreshSourcesIfNecessary()
 
         guard let startStr = item.start, let startDate = parseISO8601(startStr) else {
             log("Cannot create event — invalid start date: \(item.start ?? "nil")", level: .ERROR)
@@ -1186,16 +1207,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Pick calendar
         let calID = Settings.shared.calendarID
+        let allCalendars = eventStore.calendars(for: .event)
+        log("Found \(allCalendars.count) calendar(s): \(allCalendars.map { "\($0.title) [writable=\($0.allowsContentModifications)]" }.joined(separator: ", "))", level: .DEBUG)
+
         if !calID.isEmpty, let cal = eventStore.calendar(withIdentifier: calID) {
             event.calendar = cal
         } else if let defaultCal = eventStore.defaultCalendarForNewEvents {
             event.calendar = defaultCal
         } else {
             // Last resort: find any writable calendar
-            let writable = eventStore.calendars(for: .event).first { $0.allowsContentModifications }
+            let writable = allCalendars.first { $0.allowsContentModifications }
             guard let fallback = writable else {
-                log("No writable calendar found — open Preferences and select a calendar",
+                log("No writable calendar found (sources: \(eventStore.sources.map { "\($0.title) [type=\($0.sourceType.rawValue)]" }.joined(separator: ", "))) — open Preferences and select a calendar",
                     level: .ERROR)
+                // Try resetting the store entirely and re-requesting access
+                eventStore.reset()
+                requestCalendarAccess()
                 return false
             }
             event.calendar = fallback
