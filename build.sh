@@ -6,7 +6,7 @@ BUILD_DIR="$SCRIPT_DIR/build"
 APP_NAME="iMessageWatcher"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 
-echo "Building $APP_NAME v2.0..."
+echo "Building $APP_NAME v2.2..."
 
 # Clean
 rm -rf "$BUILD_DIR"

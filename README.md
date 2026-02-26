@@ -41,10 +41,10 @@ On first launch you'll be prompted to:
 ```bash
 brew install ollama
 ollama serve
-ollama pull deepseek-r1:latest
+ollama pull llama3:8b-instruct-q8_0   # instruct model recommended; reasoning models like deepseek-r1 tend to hallucinate
 ```
 
-The app checks for Ollama availability on each scan cycle. The default model is `deepseek-r1:latest` but you can change it in Preferences.
+The app checks for Ollama availability on each scan cycle. The default model is `llama3:8b-instruct-q8_0` but you can change it in Preferences.
 
 ## Configuration
 
@@ -54,7 +54,7 @@ All settings are accessible from the menu bar under **Preferences**.
 |---------|---------|-------------|
 | Contact Phone | _(empty)_ | 10-digit phone number to monitor |
 | Poll Interval | 60s | How often to check for new messages |
-| Ollama Model | `deepseek-r1:latest` | Which Ollama model to use for classification |
+| Ollama Model | `llama3:8b-instruct-q8_0` | Which Ollama model to use for classification |
 | Calendar | System default | Which calendar to create events in |
 | Reminder List | System default | Which reminder list to use |
 | Use Calendar | On | Create calendar events from detected plans |

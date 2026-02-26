@@ -46,7 +46,7 @@ final class Settings {
         d.register(defaults: [
             Key.contactPhone.rawValue:    "",
             Key.pollInterval.rawValue:    60.0,
-            Key.ollamaModel.rawValue:     "deepseek-r1:latest",
+            Key.ollamaModel.rawValue:     "llama3:8b-instruct-q8_0",
             Key.ntfyTopic.rawValue:       "",
             Key.calendarID.rawValue:      "",
             Key.useCalendar.rawValue:     true,
@@ -976,14 +976,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // ── LLM Classification ────────────────────────────────────────
 
-    private func classify(context: [Message], newMessages: [Message]) -> [LLMItem]? {
-        var transcript = ""
-        for m in context {
-            transcript += "[\(m.isFromMe ? "me" : "them")] \(m.text)\n"
+    // Date/time keywords that suggest a message might contain an event
+    private static let dateTimeKeywords: Set<String> = [
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+        "tomorrow", "tonight", "today",
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+        "am", "pm", "o'clock", "oclock", "noon", "midnight",
+    ]
+
+    private static let dateTimePattern = try! NSRegularExpression(
+        pattern: "\\b\\d{1,2}[:/]\\d{2}\\b|\\b\\d{1,2}\\s*(am|pm)\\b|\\b(at|from|until)\\s+\\d",
+        options: .caseInsensitive)
+
+    private func newMessagesContainDateTimeHints(_ messages: [Message]) -> Bool {
+        let newFromThem = messages.filter { !$0.isFromMe }
+        guard !newFromThem.isEmpty else { return false }
+        let combined = newFromThem.map { $0.text.lowercased() }.joined(separator: " ")
+        let words = Set(combined.components(separatedBy: .alphanumerics.inverted).filter { !$0.isEmpty })
+        if !words.isDisjoint(with: Self.dateTimeKeywords) { return true }
+        let range = NSRange(combined.startIndex..., in: combined)
+        if Self.dateTimePattern.firstMatch(in: combined, range: range) != nil { return true }
+        // Also check for direct requests (tasks)
+        let taskPatterns = ["pick up", "don't forget", "dont forget", "grab", "call the",
+                            "need you to", "can you", "make sure", "remind me", "bring"]
+        for p in taskPatterns {
+            if combined.contains(p) { return true }
         }
-        transcript += "--- NEW ---\n"
-        for m in newMessages {
-            transcript += "[\(m.isFromMe ? "me" : "them")] \(m.text)\n"
+        return false
+    }
+
+    private func classify(context: [Message], newMessages: [Message]) -> [LLMItem]? {
+        // Pre-filter: skip LLM entirely if new messages have no date/time/task hints
+        if !newMessagesContainDateTimeHints(newMessages) {
+            let preview = newMessages.filter { !$0.isFromMe }.map { $0.text }.joined(separator: " | ")
+            log("Pre-filter: no date/time/task keywords found, skipping LLM. Messages: \(preview.prefix(200))")
+            return []
+        }
+
+        // Build transcript with ONLY the new [them] messages — no context.
+        // Context was confusing the model into extracting events from old messages.
+        let newFromThem = newMessages.filter { !$0.isFromMe }
+        var transcript = ""
+        for m in newFromThem {
+            transcript += "- \(m.text)\n"
         }
 
         let df = DateFormatter()
@@ -994,56 +1032,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dayFmt.dateFormat = "EEEE"
         let dayOfWeek = dayFmt.string(from: Date())
 
+        let year = Calendar.current.component(.year, from: Date())
+
         let prompt = """
-            CRITICAL RULES (follow these exactly):
-            - ONLY extract items from NEW [them] messages (after "--- NEW ---")
-            - NEVER extract items from context messages (before "--- NEW ---")
-            - NEVER extract items from [me] messages
-            - If a NEW [them] message is just casual conversation with no dates, plans, or \
-            requests, return empty items
-            - ONLY return items actually found in the NEW messages. NEVER invent items or \
-            copy from these instructions.
+            Today is \(dayOfWeek), \(now). Year: \(year).
 
-            You analyze iMessages between a user and a monitored contact.
-            Messages marked [them] are from the monitored contact. Messages marked [me] are from the user.
-            Only the messages after "--- NEW ---" are unprocessed.
+            Below are new messages from a contact. Extract ONLY calendar events or tasks.
+            An event MUST have a specific date/time mentioned IN the message text.
+            A task is a direct request to do something.
+            If no events or tasks found, return {"items": []}.
 
-            Current date/time: \(now) (\(dayOfWeek))
-            Current year is \(Calendar.current.component(.year, from: Date())). \
-            ALL event dates MUST use this year (or next year for dates clearly in the future).
-
-            For each NEW [them] message, determine if it contains:
-            1. "event" — a calendar event: dinner, appointment, birthday, meeting, trip, \
-            party, recital, game, etc.
-            2. "task" — a request or ask directed at the user: pick up X, call Y, fix Z, \
-            buy something, etc.
-
-            Rules:
-            - Confirmed or stated plans ARE events ("dinner friday at 7", "dentist tuesday 3pm")
-            - Someone asking a question is NOT an event ("should we do dinner friday?")
-            - Past tense / memories are NOT events ("remember last week's dinner")
-            - Casual conversation, greetings, status updates are NEITHER events nor tasks
-            - A single message can contain multiple items
-            - For events: provide title, ISO 8601 start/end timestamps (no timezone suffix), \
-            and all_day boolean. If no end time, default to 1 hour after start. \
-            Use the current date/time above to resolve relative dates like "Tuesday" or "tomorrow".
-            - If no specific time is mentioned (just a date like "March 7"), set all_day to true \
-            and use T00:00:00 for both start and end.
-            - Multi-day events: set start to first day T00:00:00 and end to last day T23:59:00, \
-            all_day true.
-            - For tasks: provide title and due_minutes (how many minutes from now the reminder \
-            should fire, default 30).
-
-            Conversation:
+            Messages:
             \(transcript)
-            Respond ONLY with valid JSON (no markdown, no commentary).
-            IMPORTANT: Do NOT copy the example values below. Extract ONLY from the conversation above.
-            JSON schema (replace ALL values with real data from the messages):
-            {"items": [{"type": "event", "title": "<REAL TITLE>", \
-            "start": "<REAL ISO 8601>", "end": "<REAL ISO 8601>", "all_day": false}]}
-            For tasks: {"items": [{"type": "task", "title": "<REAL TITLE>", \
-            "due_minutes": 30}]}
-            If nothing actionable found: {"items": []}
+            Return JSON only: {"items": [{"type":"event","title":"...","start":"ISO8601","end":"ISO8601","all_day":false}]} or {"items": [{"type":"task","title":"...","due_minutes":30}]} or {"items": []}
             """
 
         log("LLM prompt:\n\(prompt)", level: .DEBUG)
@@ -1055,16 +1056,56 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Strip markdown code fences if present
         var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.hasPrefix("```") {
-            // Remove opening fence (possibly ```json)
             if let firstNewline = cleaned.firstIndex(of: "\n") {
                 cleaned = String(cleaned[cleaned.index(after: firstNewline)...])
             }
-            // Remove closing fence
             if let lastFence = cleaned.range(of: "```", options: .backwards) {
                 cleaned = String(cleaned[..<lastFence.lowerBound])
             }
             cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+
+        // Strip deepseek-r1 <think>...</think> blocks
+        if let thinkEnd = cleaned.range(of: "</think>") {
+            cleaned = String(cleaned[thinkEnd.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // deepseek-r1 with format:"json" sometimes embeds reasoning as a JSON key
+        // e.g. {"When processing...": "...", "items": [...]}
+        // or {"reasoning": "...", "items": [...]}
+        // Extract just the items array if we can find it
+        if let itemsRange = cleaned.range(of: "\"items\"\\s*:\\s*\\[", options: .regularExpression) {
+            // Find the matching closing bracket
+            let searchStart = itemsRange.lowerBound
+            var depth = 0
+            var foundStart = false
+            var extractEnd = cleaned.endIndex
+            for i in cleaned[searchStart...].indices {
+                let c = cleaned[i]
+                if c == "[" { depth += 1; foundStart = true }
+                else if c == "]" { depth -= 1 }
+                if foundStart && depth == 0 {
+                    extractEnd = cleaned.index(after: i)
+                    break
+                }
+            }
+            cleaned = "{" + String(cleaned[searchStart..<extractEnd]) + "}"
+        }
+
+        // Strip timezone suffixes the LLM sometimes adds (+00:00, Z)
+        cleaned = cleaned.replacingOccurrences(of: "+00:00", with: "")
+        cleaned = cleaned.replacingOccurrences(
+            of: "\"(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})Z\"",
+            with: "\"$1\"",
+            options: .regularExpression)
+
+        // Normalize HH:mm timestamps to HH:mm:00 (model sometimes omits seconds)
+        // Only match if NOT already followed by :SS
+        cleaned = cleaned.replacingOccurrences(
+            of: "(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2})(?!:\\d{2})\"",
+            with: "$1:00\"",
+            options: .regularExpression)
 
         guard let data = cleaned.data(using: .utf8) else {
             log("Failed to encode LLM response as UTF-8", level: .ERROR)
@@ -1077,6 +1118,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let valid = response.items.filter { item in
                 guard !item.title.isEmpty else {
                     log("Skipping item with empty title", level: .WARN)
+                    return false
+                }
+                // Reject placeholder/hallucinated titles
+                let lower = item.title.lowercased()
+                if lower.contains("<real") || lower == "pick up x"
+                    || lower == "call y" || lower == "fix z" {
+                    log("Skipping placeholder title: \"\(item.title)\"", level: .WARN)
                     return false
                 }
                 if item.type == "event" {
